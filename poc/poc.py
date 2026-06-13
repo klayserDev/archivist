@@ -6,7 +6,7 @@ import ollama
 from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct, Distance, VectorParams
 import uuid
-
+import time
 def main():
     print("== Archivist - Proof of Concept ==")
     pdf_path = input("Enter the path to the PDF file: ").strip()
@@ -36,16 +36,36 @@ def main():
         print("\n" + "─" * 50 + "\n")
 
 def query(question):
-    # Placeholder for query logic
-    # In a real implementation, this would involve searching the vector database,
-    # retrieving relevant chunks, and using a language model to generate an answer.
-    print(f"Simulating query processing for question: {question}")
-    # Simulate a response
+    start_time = time.time()
+    response = ollama.embeddings(
+            model="nomic-embed-text",
+            prompt=question
+    )
+    vector = response['embedding']
+    qdrant = QdrantClient(host="localhost", port=6333)
+    response = qdrant.query_points(
+        collection_name="documents",
+        query=vector,       
+        limit=5
+    )
+    results = response.points
+    response = ollama.chat(
+        model="qwen3:1.7b",
+        messages=[
+            {"role": "system", "content": "You are an assistant that answers questions based on the provided context."},
+            {"role": "user", "content": f"Question: {question}\n\nContext:\n" + "\n\n".join([hit.payload['text'] for hit in results])}
+        ]
+    )
+    end_time = time.time()
+    
+    # Extract unique sources to avoid printing duplicates
+    unique_sources = list(set([hit.payload['source'] for hit in results]))
+    
     return {
-        "answer": "This is a simulated answer based on the PDF content.",
-        "sources": ["source1.pdf", "source2.pdf"],
-        "chunks_used": ["chunk1", "chunk2"],
-        "latency": 0.5
+        "answer": response['message']['content'],
+        "sources": unique_sources,
+        "chunks_used": [f"Score: {hit.score:.2f}" for hit in results], # Shows how relevant the chunks were
+        "latency": round(end_time - start_time, 2)
     }
 
 def ingest_pdf(pdf_path):
