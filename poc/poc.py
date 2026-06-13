@@ -1,5 +1,11 @@
 import sys
 from pathlib import Path
+import fitz
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+import ollama
+from qdrant_client import QdrantClient
+from qdrant_client.models import PointStruct, Distance, VectorParams
+import uuid
 
 def main():
     print("== Archivist - Proof of Concept ==")
@@ -43,13 +49,42 @@ def query(question):
     }
 
 def ingest_pdf(pdf_path):
-    # Placeholder for PDF ingestion logic
-    # In a real implementation, this would involve reading the PDF,
-    # extracting text, splitting it into chunks, and storing it in a vector database.
-    print(f"Simulating PDF ingestion for file: {pdf_path}")
-    # Simulate creating 10 chunks from the PDF
-    n_chunks = 10
-    return n_chunks
+    doc = fitz.open(pdf_path)
+    if doc.page_count == 0:
+        print("The PDF file is empty. No content to ingest.")
+        return 0
+    text = " ".join(page.get_text() for page in doc)
+    splitter  = RecursiveCharacterTextSplitter(
+        chunk_size=500, 
+        chunk_overlap=50, 
+        separators=["\n\n", "\n", ".", " "]
+        )
+    #Connect to Qdrant vector database
+    qdrant = QdrantClient(host="localhost", port=6333)
+    if not qdrant.collection_exists(collection_name="documents"):
+        print("Collection 'documents' not found. Creating it now...")
+        qdrant.create_collection(
+            collection_name="documents",
+            vectors_config=VectorParams(size=768, distance=Distance.COSINE),
+        )
+    
+    chunks = splitter.split_text(text)
+    points = []
+    
+    for chunk in chunks:
+        response = ollama.embeddings(
+            model="nomic-embed-text",
+            prompt=chunk
+        )
+        vector = response['embedding']
+        
+        points.append(PointStruct(
+            id=str(uuid.uuid4()),
+            vector=vector,
+            payload={"text":chunk, "source": pdf_path}    
+        ))
+    qdrant.upsert(collection_name="documents", points=points)
+    return len(chunks)
 
 if __name__ == "__main__":
     main()
