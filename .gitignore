@@ -1,3 +1,9 @@
-venv/
+# Virtual environments (any location)
+**/venv/
+**/.venv/
+**/env/
+**/.env/
+
 __pycache__/
 .env
+**/uploads/
